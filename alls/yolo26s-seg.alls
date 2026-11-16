@@ -1,0 +1,63 @@
+# Базовый model script (.alls) для yolo26s-seg под Hailo-8 / Hailo-8L.
+#
+# Назначение файла — показать, из каких шагов состоит компиляция сегментационной модели,
+# и дать рабочую отправную точку. Здесь НЕТ nms_postprocess: Hailo DFC не поддерживает
+# NMS для instance segmentation (ни для YOLOv8-seg, ни для YOLO26-seg), поэтому HEF
+# отдаёт сырые выходы головы, а NMS и сборка масок выполняются на CPU (hailo_no_nms.cpp).
+#
+# Порядок применения:
+#   1) DFC: parse ONNX -> HAR   (end nodes задаются при парсинге, а не в этом файле!)
+#   2) DFC: load_model_script("yolo26s-seg.alls"); optimize(calib)
+#   3) DFC: compile() -> HEF
+# Подробности — docs/YOLO26S_SEG.md.
+
+# --- 1. Вход --------------------------------------------------------------------
+# Сеть компилируется под uint8 RGB 0..255 (так её и подаёт hailo_no_nms.cpp:
+# prepare() в common.hpp делает letterbox + BGR->RGB, без нормализации).
+# Единственная предобработка внутри HEF — деление на 255.
+normalization1 = normalization([0.0, 0.0, 0.0], [255.0, 255.0, 255.0])
+
+# --- 2. Выходы головы -----------------------------------------------------------
+# У YOLO26 reg_max = 1: DFL-слоя нет, бокс регрессируется напрямую (4 канала).
+# На каждый масштаб приходится три конва, которые надо объявить end nodes при парсинге:
+#
+#   масштаб 80x80 (stride 8) : /model.23/cv2.0/... (бокс, 4)  /model.23/cv3.0/... (классы, nc)
+#                              /model.23/cv4.0/... (коэффициенты масок, 32)
+#   масштаб 40x40 (stride 16): cv2.1 / cv3.1 / cv4.1
+#   масштаб 20x20 (stride 32): cv2.2 / cv3.2 / cv4.2
+#   прототипы масок          : /model.23/proto/... (160x160x32 при входе 640)
+#
+# Точные имена узлов зависят от ONNX-экспорта конкретной модели: получить их можно
+# скриптом tools/onnx_end_nodes.py или в Netron. Десять выходов = 9 головных + прототипы,
+# именно столько ждёт декодер в yolo26seg.hpp.
+#
+# NMS внутрь HEF НЕ добавляем. Для сравнения, как это выглядело бы для детекции:
+#   nms_postprocess("nms_config_yolov8s.json", meta_arch=yolov8, engine=cpu)
+# Для meta_arch=yolov8 это работает только при 6 выходах (бокс+классы), и на сегментации
+# DFC завершится ошибкой — проверено на model zoo: yolov8s_seg.alls вообще без NMS.
+
+# --- 3. Активация выхода (опционально) ------------------------------------------
+# Классовые ветви выдают логиты. Два варианта:
+#
+#   a) sigmoid на CPU (по умолчанию в этом репозитории): ничего не добавляем,
+#      SegDecoder сам определяет логиты и применяет sigmoid (флаг --sigmoid).
+#   b) sigmoid в HEF: убирает работу с CPU, но точность на «хвосте» распределения
+#      зависит от квантования выходного слоя, а сам слой становится 8-битным.
+#      Имена конвов берутся из списка слоёв HAR (см. docs/YOLO26S_SEG.md):
+#
+# change_output_activation(convXX_80, sigmoid)
+# change_output_activation(convXX_40, sigmoid)
+# change_output_activation(convXX_20, sigmoid)
+#
+# Если sigmoid в HEF не включается, но выход остаётся 8-битным и «упирается» в диапазон,
+# помогает ограничение диапазона вместо активации:
+#
+# quantization_param([convXX_80, convXX_40, convXX_20], force_range_out=[0.0, 1.0])
+
+# --- 4. Оптимизация и компиляция ------------------------------------------------
+# optimization_level/compression_level: 0/0 — максимум точности, 2/2 — максимум скорости.
+model_optimization_flavor(optimization_level=1, compression_level=1)
+performance_param(compiler_optimization_level=max)
+
+# Иногда полезно для сетей с несколькими выходами (раскладка буферов):
+# allocator_param(width_splitter_defuse=disabled)

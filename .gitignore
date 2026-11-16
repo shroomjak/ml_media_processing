@@ -66,3 +66,12 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Model artifacts (HEF/HAR/calibration)
+*.hef
+*.har
+*.npy
+
+# Python
+__pycache__/
+*.pyc

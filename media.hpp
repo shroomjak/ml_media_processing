@@ -108,8 +108,17 @@ template <class Backend> void process_file(Backend &model, const char *input, co
                 double fps = capture.get(cv::CAP_PROP_FPS);
                 if (!std::isfinite(fps) || fps <= 0)
                     throw std::runtime_error("Invalid FPS");
-                writer.open(output, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), fps,
-                            painted.size());
+                // Кодек должен поддерживаться контейнером выходного файла: формат выхода
+                // задаёт пользователь, поэтому кодек выбирается по расширению.
+                auto ext = std::filesystem::path(output).extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+                if (ext == ".avi")
+                    writer.open(output, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), fps,
+                                painted.size());
+                else
+                    writer.open(output, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), fps,
+                                painted.size());
                 if (!writer.isOpened())
                     throw std::runtime_error("Cannot create video");
             }

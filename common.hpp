@@ -8,6 +8,9 @@
 #include <vector>
 
 constexpr int S = 640;
+// Число классов модели YOLOv8/YOLO11, под которую написан decode() ниже.
+// У YOLO26 головы разбираются отдельно (yolo26s_seg.cpp) и эта константа не используется.
+constexpr int NC = 2;
 // Геометрия исходного изображения и его размещения внутри letterbox 640×640.
 struct Geo {
     int left, top, nw, nh, w, h;
@@ -82,19 +85,21 @@ std::vector<Det> select_nms(std::vector<Det> all) {
     return keep;
 }
 // Читаем выходы HEF и декодируем расстояния DFL из 16 бинов.
+// ВАЖНО: это голова YOLOv8/YOLO11 (reg_max=16, DFL). У YOLO26 reg_max=1, DFL-слоя нет,
+// поэтому для YOLO26 этот декодер не применяется — см. yolo26seg.hpp.
 std::vector<Det> decode(const std::map<Key, std::vector<float>> &t) {
     std::vector<Det> all;
     for (int s : {20, 40, 80}) {
         int stride = S / s;
         // Для каждого масштаба отдельно: 64 DFL, 2 оценки классов, 32 коэффициента.
         const auto &box = t.at({s, 64});
-        const auto &scores = t.at({s, 2});
+        const auto &scores = t.at({s, NC});
         const auto &coeff = t.at({s, 32});
         for (int n = 0; n < s * s; n++) {
             int cls = 0;
             float score = -1e30f;
-            for (int c = 0; c < 2; c++) {
-                float v = scores[n * 2 + c];
+            for (int c = 0; c < NC; c++) {
+                float v = scores[n * NC + c];
                 if (v > score) {
                     score = v;
                     cls = c;
@@ -127,6 +132,7 @@ std::vector<Det> decode(const std::map<Key, std::vector<float>> &t) {
                   std::clamp(y + d[3], 0.f, float(S)),
                   score,
                   cls,
+                  {},
                   {}};
             a.coeff.assign(coeff.begin() + n * 32, coeff.begin() + (n + 1) * 32);
             all.push_back(std::move(a));
@@ -135,28 +141,42 @@ std::vector<Det> decode(const std::map<Key, std::vector<float>> &t) {
     return select_nms(std::move(all));
 }
 
-// Маска объекта — сигмоида линейной комбинации 32 прототипов.
-void make_masks(std::vector<Det> &ds, const std::vector<float> &proto) {
+// Маска объекта — сигмоида линейной комбинации прототипов (по умолчанию 32).
+// Буфер прототипов передаётся указателем, чтобы не копировать ~3 МБ на каждый кадр.
+void make_masks(std::vector<Det> &ds, const float *proto, size_t count, int size = 160, int nm = 32) {
+    if (count < size_t(size) * size * nm)
+        throw std::runtime_error("Mask protos buffer is smaller than 160x160x" + std::to_string(nm));
     for (auto &d : ds) {
-        d.mask = cv::Mat(160, 160, CV_32FC1);
-        for (int y = 0; y < 160; y++)
-            for (int x = 0; x < 160; x++) {
+        if (d.coeff.size() != size_t(nm))
+            throw std::runtime_error("Unexpected number of mask coefficients: " +
+                                     std::to_string(d.coeff.size()));
+        d.mask = cv::Mat(size, size, CV_32FC1);
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++) {
                 float v = 0;
-                // HWC: 32 числа каждого пикселя расположены подряд в памяти.
-                const float *p = &proto[(y * 160 + x) * 32];
-                for (int c = 0; c < 32; c++)
+                // HWC: nm чисел каждого пикселя расположены подряд в памяти.
+                const float *p = &proto[(size_t(y) * size + x) * nm];
+                for (int c = 0; c < nm; c++)
                     v += p[c] * d.coeff[c];
                 d.mask.at<float>(y, x) = sig(v);
             }
     }
 }
+void make_masks(std::vector<Det> &ds, const std::vector<float> &proto) {
+    make_masks(ds, proto.data(), proto.size());
+}
 // Возвращаем маску и рамку в систему координат исходного кадра.
 void annotate(cv::Mat &image, const Geo &g, const std::vector<Det> &detections) {
     for (const auto &d : detections) {
-        cv::Mat full, mask;
-        // Убираем поля letterbox перед масштабированием к исходному изображению.
-        cv::resize(d.mask, full, cv::Size(S, S));
-        cv::resize(full(cv::Rect(g.left, g.top, g.nw, g.nh)), mask, image.size());
+        cv::Mat mask;
+        // Маска есть только у сегментации: для детекции кадр остаётся без заливки.
+        // Обращение к пустой cv::Mat.at() — падение, поэтому ветка проверяется заранее.
+        if (!d.mask.empty()) {
+            cv::Mat full;
+            // Убираем поля letterbox перед масштабированием к исходному изображению.
+            cv::resize(d.mask, full, cv::Size(S, S));
+            cv::resize(full(cv::Rect(g.left, g.top, g.nw, g.nh)), mask, image.size());
+        }
         int x1 = std::clamp(int(std::floor((d.x1 - g.left) * g.w / g.nw)), 0, g.w);
         int y1 = std::clamp(int(std::floor((d.y1 - g.top) * g.h / g.nh)), 0, g.h);
         int x2 = std::clamp(int(std::ceil((d.x2 - g.left) * g.w / g.nw)), 0, g.w);
@@ -165,13 +185,14 @@ void annotate(cv::Mat &image, const Geo &g, const std::vector<Det> &detections) 
             continue;
         cv::Vec3b color((37 * d.cls + 67) % 256, (17 * d.cls + 149) % 256, (97 * d.cls + 83) % 256);
         // Накладываем маску только внутри рамки, смешивая цвет с исходным пикселем.
-        for (int y = y1; y < y2; y++)
-            for (int x = x1; x < x2; x++)
-                if (mask.at<float>(y, x) > 0.5f) {
-                    auto &px = image.at<cv::Vec3b>(y, x);
-                    for (int c = 0; c < 3; c++)
-                        px[c] = static_cast<uchar>(0.6f * px[c] + 0.4f * color[c]);
-                }
+        if (!mask.empty())
+            for (int y = y1; y < y2; y++)
+                for (int x = x1; x < x2; x++)
+                    if (mask.at<float>(y, x) > 0.5f) {
+                        auto &px = image.at<cv::Vec3b>(y, x);
+                        for (int c = 0; c < 3; c++)
+                            px[c] = static_cast<uchar>(0.6f * px[c] + 0.4f * color[c]);
+                    }
         cv::Scalar col(color[0], color[1], color[2]);
         cv::rectangle(image, cv::Point(x1, y1),
                       cv::Point(std::min(x2, g.w - 1), std::min(y2, g.h - 1)), col, 2);
