@@ -67,6 +67,9 @@ float overlap(const Det &a, const Det &b) {
 // этот тип головы), поэтому подавление дублей по боксам выполняется здесь, до сборки масок.
 // IoU 0.45 — как в исходной проверенной версии; 0.7 (значение Ultralytics по умолчанию)
 // уместнее для плотных сцен, где объекты одного класса перекрываются.
+// Порог уверенности, ниже которого объект отбрасывается ещё до NMS.
+// Задан для вероятностей (после sigmoid), а не для логитов.
+constexpr float CONF = 0.25f;
 constexpr float NMS_IOU = 0.45f;
 constexpr size_t NMS_MAX = 50;   // сколько объектов оставить после подавления
 constexpr size_t NMS_CANDIDATES = 300; // сколько лучших кандидатов сравнивать попарно
@@ -94,7 +97,7 @@ std::vector<Det> select_nms(std::vector<Det> all) {
 }
 // Читаем выходы HEF и декодируем расстояния DFL из 16 бинов.
 // ВАЖНО: это голова YOLOv8/YOLO11 (reg_max=16, DFL). У YOLO26 reg_max=1, DFL-слоя нет,
-// поэтому для YOLO26 этот декодер не применяется — см. yolo26seg.hpp.
+// поэтому для YOLO26 этот декодер не применяется — см. yolo26s_seg.cpp.
 std::vector<Det> decode(const std::map<Key, std::vector<float>> &t) {
     std::vector<Det> all;
     for (int s : {20, 40, 80}) {
@@ -113,7 +116,7 @@ std::vector<Det> decode(const std::map<Key, std::vector<float>> &t) {
                     cls = c;
                 }
             }
-            if (score < 0.25f)
+            if (score < CONF)
                 continue;
             // Каждая сторона: softmax по 16 бинам и математическое ожидание.
             // Вычитание максимума перед exp защищает от переполнения.

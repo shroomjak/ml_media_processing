@@ -41,7 +41,8 @@ cmake -S . -B build && cmake --build build -j
   `decode()` для головы с DFL (используется только `yolo11s_seg.cpp`).
 - `hailo_setup.hpp` — обвязка HailoRT: устройство → HEF → сеть → потоки → `activate()`.
 - `media.hpp` — общий цикл по кадрам и замеры read/preprocess/infer/postprocess/draw/write.
-- `alls/` — model scripts: базовый для yolo26s-seg и эталон с `nms_postprocess` для ревизии.
-- `docs/REVIEW.md` — разбор исходного `hailo.cpp` (встроенный NMS) и список исправлений.
+- `alls/` — базовый model script для yolo26s-seg (без NMS: для seg его собирать нельзя).
+- `docs/REVIEW.md` — разбор исходного `hailo.cpp` (NMS внутри HEF) и почему так нельзя.
+- `docs/NMS_REVIEW.md` — ревизия NMS на CPU: что и почему делает `select_nms()`.
 - `docs/YOLO26S_SEG.md` — как пересобрать `.alls`, как узнать размерности и что менять в коде.
 - `tools/onnx_end_nodes.py` — печатает end nodes головы для парсинга ONNX в DFC.
