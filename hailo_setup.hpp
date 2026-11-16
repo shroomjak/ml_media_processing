@@ -15,6 +15,22 @@ template <typename T> T take(hailort::Expected<T> &&result, const char *what) {
     return result.release();
 }
 
+// Выход NMS в HEF означает, что при компиляции боковые и классовые ветви были заменены
+// постпроцессом, а ветви коэффициентов масок и прототипов для сегментации потеряны.
+inline bool has_nms_output(const std::vector<hailort::OutputVStream> &outputs) {
+    for (const auto &output : outputs) {
+        const auto order = output.get_info().format.order;
+        const bool nms_order = order == HAILO_FORMAT_ORDER_HAILO_NMS ||
+                               order == HAILO_FORMAT_ORDER_HAILO_NMS_ON_CHIP ||
+                               order == HAILO_FORMAT_ORDER_HAILO_NMS_BY_CLASS ||
+                               order == HAILO_FORMAT_ORDER_HAILO_NMS_BY_SCORE ||
+                               order == HAILO_FORMAT_ORDER_HAILO_NMS_WITH_BYTE_MASK;
+        if (nms_order || std::string(output.name()).find("nms") != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
 // Печать потоков HEF без платы: Hef::create() читает только файл.
 // Это первый шаг для незнакомого HEF — из этих форм заполняются константы в .cpp.
 inline void inspect(const char *path) {

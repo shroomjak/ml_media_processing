@@ -36,8 +36,13 @@ class Yolo26Seg {
     explicit Yolo26Seg(const char *path) : session_(path) {
         const auto &outs = session_.outputs();
         if (outs.size() != 10)
-            throw std::runtime_error("yolo26s-seg HEF must have 10 outputs (9 head + protos), got " +
-                                     std::to_string(outs.size()) + ". Run --inspect.");
+            throw std::runtime_error(
+                has_nms_output(outs)
+                    ? "HEF contains an NMS output: боковые и классовые ветви заменены NMS, а ветви "
+                      "коэффициентов масок и прототипов при такой компиляции теряются — "
+                      "сегментация в этом HEF невозможна. Уберите nms_postprocess из .alls."
+                    : "yolo26s-seg HEF must have 10 outputs (9 head + protos), got " +
+                          std::to_string(outs.size()) + ". Run --inspect.");
         // Роли определяются по размерностям: имена конвов зависят от парсера DFC.
         for (size_t i = 0; i < outs.size(); ++i) {
             const auto shape = outs[i].get_info().shape;

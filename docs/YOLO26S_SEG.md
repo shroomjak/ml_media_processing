@@ -123,7 +123,8 @@ cmake -S . -B build && cmake --build build -j
 
 | Симптом | Причина | Что делать |
 |---|---|---|
-| `must have 10 outputs` | HEF собран с другими end nodes (например, один общий выход головы) | `--inspect`; пересобрать с 9 конвами + прототипы |
+| `must have 10 outputs`: `HEF contains an NMS output` | в `.alls` попал `nms_postprocess`; NMS заменил боковые и классовые ветви, а ветви масок и прототипов при этом потеряны | убрать `nms_postprocess` из `.alls`, NMS делать на хосте (см. `docs/REVIEW.md`) |
+| `must have 10 outputs` без упоминания NMS | HEF собран с другими end nodes (например, один общий выход головы) | `--inspect`; пересобрать с 9 конвами + прототипы |
 | `no 4-channel box output` / боксов нет | это HEF YOLOv8/YOLO11 (64 канала, DFL) | использовать `yolo11s_seg.cpp` |
 | детекций нет совсем | sigmoid не там: логиты с порогом 0.25 | сверить `SIGMOID_IN_HEF` с `.alls` |
 | боксы «в углу» / крошечные | порядок `ltrb` не совпал (модель отдаёт `cx,cy,w,h`) | пересобрать HEF без декода в графе или поменять формулу в `postprocess()` |

@@ -15,9 +15,13 @@ class Yolo11Seg {
   public:
     explicit Yolo11Seg(const char *path) : session_(path) {
         if (session_.outputs().size() != 10)
-            throw std::runtime_error("yolo11s-seg expects 10 outputs (9 head + protos), got " +
-                                     std::to_string(session_.outputs().size()) +
-                                     ". Run --inspect.");
+            throw std::runtime_error(
+                has_nms_output(session_.outputs())
+                    ? "HEF contains an NMS output: боковые и классовые ветви заменены NMS, а ветви "
+                      "коэффициентов масок и прототипов при такой компиляции теряются — "
+                      "сегментация в этом HEF невозможна. Уберите nms_postprocess из .alls."
+                    : "yolo11s-seg expects 10 outputs (9 head + protos), got " +
+                          std::to_string(session_.outputs().size()) + ". Run --inspect.");
         // Сопоставление по форме, а не по позиции: порядок выходов задаёт DFC.
         for (size_t i = 0; i < session_.outputs().size(); ++i) {
             const auto shape = session_.outputs()[i].get_info().shape;
