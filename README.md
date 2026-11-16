@@ -11,9 +11,13 @@
 | `yolo26s_seg.cpp` | YOLO26s-seg | 3×(box 4, cls NC, coeff 32) + protos | без DFL (`reg_max = 1`) |
 | `yolo11s_seg.cpp` | YOLO11s-seg / YOLOv8s-seg | 3×(box 64, cls NC, coeff 32) + protos | DFL 16 бинов |
 
-NMS работает на CPU (`common.hpp::select_nms()`), по боксам каждого класса, до сборки
-масок: для instance segmentation Hailo DFC не умеет зашивать NMS в HEF, поэтому
+NMS работает на CPU (функция `nms()` в каждом файле), по боксам каждого класса, до
+сборки масок: для instance segmentation Hailo DFC не умеет зашивать NMS в HEF, поэтому
 подавление дублей и маски для оставшихся объектов считаются на хосте.
+
+Обе программы полностью самостоятельны: ни общих заголовков, ни общего конвейера —
+каждый файл содержит свой letterbox, свой декод, свой NMS и свой цикл по кадрам.
+Дублирование здесь намеренное: правишь один файл — не боишься сломать второй.
 
 ## Сборка
 
@@ -37,12 +41,16 @@ cmake -S . -B build && cmake --build build -j
 
 ## Файлы
 
-- `common.hpp` — letterbox 640×640 (pad 114, BGR→RGB), NMS, маски, отрисовка, а также
-  `decode()` для головы с DFL (используется только `yolo11s_seg.cpp`).
-- `hailo_setup.hpp` — обвязка HailoRT: устройство → HEF → сеть → потоки → `activate()`.
-- `media.hpp` — общий цикл по кадрам и замеры read/preprocess/infer/postprocess/draw/write.
-- `alls/` — базовый model script для yolo26s-seg (без NMS: для seg его собирать нельзя).
+- `yolo26s_seg.cpp` — самостоятельная программа для YOLO26s-seg (бокс 4 канала, без DFL).
+- `yolo11s_seg.cpp` — самостоятельная программа для YOLO11s-seg (бокс 64 канала, DFL).
+- `alls/yolo26s-seg.alls` — базовый model script для yolo26s-seg (без NMS: для seg его
+  собирать нельзя).
 - `docs/REVIEW.md` — разбор исходного `hailo.cpp` (NMS внутри HEF) и почему так нельзя.
-- `docs/NMS_REVIEW.md` — ревизия NMS на CPU: что и почему делает `select_nms()`.
+- `docs/NMS_REVIEW.md` — ревизия NMS на CPU: что и почему делает `nms()`.
 - `docs/YOLO26S_SEG.md` — как пересобрать `.alls`, как узнать размерности и что менять в коде.
 - `tools/onnx_end_nodes.py` — печатает end nodes головы для парсинга ONNX в DFC.
+
+Структура каждого `.cpp` одинаковая и разложена по разделам:
+`1` параметры модели → `2` типы данных → `3` HailoRT → `4` letterbox → `5` привязка
+выходов по формам → `6` декод головы → `7` NMS → `8` маски → `9` отрисовка →
+`10` цикл по кадрам → `11` `main`.
