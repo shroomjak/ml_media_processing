@@ -63,23 +63,31 @@ float overlap(const Det &a, const Det &b) {
     float bb = std::max(0.f, b.x2 - b.x1) * std::max(0.f, b.y2 - b.y1);
     return inter / (aa + bb - inter + 1e-7f);
 }
-// NMS отдельно для каждого класса; оставляем не больше 50 объектов.
+// Параметры NMS на CPU. Для сегментации NMS в HEF зашить нельзя (DFC не поддерживает
+// этот тип головы), поэтому подавление дублей по боксам выполняется здесь, до сборки масок.
+// IoU 0.45 — как в исходной проверенной версии; 0.7 (значение Ultralytics по умолчанию)
+// уместнее для плотных сцен, где объекты одного класса перекрываются.
+constexpr float NMS_IOU = 0.45f;
+constexpr size_t NMS_MAX = 50;   // сколько объектов оставить после подавления
+constexpr size_t NMS_CANDIDATES = 300; // сколько лучших кандидатов сравнивать попарно
+
+// NMS отдельно для каждого класса: боксы одного класса с IoU > NMS_IOU подавляются.
 std::vector<Det> select_nms(std::vector<Det> all) {
     std::sort(all.begin(), all.end(), [](const Det &a, const Det &b) { return a.score > b.score; });
     // Ограничение кандидатов сокращает стоимость попарного сравнения рамок.
-    if (all.size() > 300)
-        all.resize(300);
+    if (all.size() > NMS_CANDIDATES)
+        all.resize(NMS_CANDIDATES);
     std::vector<Det> keep;
     for (const auto &a : all) {
         bool suppressed = false;
         for (const auto &b : keep)
-            if (a.cls == b.cls && overlap(a, b) > 0.45f) {
+            if (a.cls == b.cls && overlap(a, b) > NMS_IOU) {
                 suppressed = true;
                 break;
             }
         if (!suppressed)
             keep.push_back(a);
-        if (keep.size() >= 50)
+        if (keep.size() >= NMS_MAX)
             break;
     }
     return keep;

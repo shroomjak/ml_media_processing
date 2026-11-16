@@ -11,8 +11,9 @@
 | `yolo26s_seg.cpp` | YOLO26s-seg | 3×(box 4, cls NC, coeff 32) + protos | без DFL (`reg_max = 1`) |
 | `yolo11s_seg.cpp` | YOLO11s-seg / YOLOv8s-seg | 3×(box 64, cls NC, coeff 32) + protos | DFL 16 бинов |
 
-NMS в HEF не используется: для instance segmentation Hailo DFC его не поддерживает,
-NMS выполняется на CPU в `common.hpp::select_nms()`.
+NMS работает на CPU (`common.hpp::select_nms()`), по боксам каждого класса, до сборки
+масок: для instance segmentation Hailo DFC не умеет зашивать NMS в HEF, поэтому
+подавление дублей и маски для оставшихся объектов считаются на хосте.
 
 ## Сборка
 
